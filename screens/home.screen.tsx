@@ -1,10 +1,13 @@
+import Regenerate from "@/assets/svgs/regenerate";
+import Reload from "@/assets/svgs/reload";
+import AntDesign from "@expo/vector-icons/AntDesign";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import axios from "axios";
 import { Audio } from "expo-av";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Speech from "expo-speech";
 import LottieView from "lottie-react-native";
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
   Image,
@@ -23,6 +26,26 @@ export default function HomeScreen() {
   const [recording, setRecording] = useState<Audio.Recording>();
   const [AIResponse, setAIResponse] = useState(false);
   const [AISpeaking, setAISpeaking] = useState(false);
+  const lottieRef = useRef<LottieView>(null);
+
+  // get microphone permission
+  const getMicrophonePermission = async () => {
+    try {
+      const { granted } = await Audio.requestPermissionsAsync();
+
+      if (!granted) {
+        Alert.alert(
+          "Permission",
+          "Please grant permission to access microphone"
+        );
+        return false;
+      }
+      return true;
+    } catch (error) {
+      console.log(error);
+      return false;
+    }
+  };
 
   const recordingOptions: any = {
     android: {
@@ -45,29 +68,9 @@ export default function HomeScreen() {
     },
   };
 
-  const getMicrophonePermission = async () => {
-    try {
-      let { granted } = await Audio.requestPermissionsAsync();
-
-      if (!granted) {
-        Alert.alert(
-          "Permission",
-          "Please grant permission to access microphone"
-        );
-        return false;
-      }
-      return true;
-    } catch (error) {
-      console.log(error);
-      return false;
-    }
-  };
-
   const startRecording = async () => {
     const hasPermission = await getMicrophonePermission();
-
     if (!hasPermission) return;
-
     try {
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
@@ -77,7 +80,7 @@ export default function HomeScreen() {
       const { recording } = await Audio.Recording.createAsync(recordingOptions);
       setRecording(recording);
     } catch (error) {
-      console.log("Failed to start recording", error);
+      console.log("Failed to start Recording", error);
       Alert.alert("Error", "Failed to start recording");
     }
   };
@@ -86,21 +89,22 @@ export default function HomeScreen() {
     try {
       setIsRecording(false);
       setLoading(true);
-
       await recording?.stopAndUnloadAsync();
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: false,
       });
 
       const uri = recording?.getURI();
+
+      // send audio to whisper API for transcription
       const transcript = await sendAudioToWhisper(uri!);
+
       setText(transcript);
 
-      // const gptResponse = await sendToGpt(transcript);
-      // setAIResponse(true);
-      // await speakText(gptResponse);
+      // send the transcript to gpt-4 API for response
+      await sendToGpt(transcript);
     } catch (error) {
-      console.log("Error while sending", error);
+      console.log("Failed to stop Recording", error);
       Alert.alert("Error", "Failed to stop recording");
     }
   };
@@ -125,21 +129,13 @@ export default function HomeScreen() {
           },
         }
       );
-      console.log("response: ", response);
       return response.data.text;
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.status === 429) {
-        Alert.alert(
-          "Rate Limit Exceeded",
-          "You are sending requests too quickly. Please try again in a moment."
-        );
-      } else {
-        console.log("Other error:", error);
-        Alert.alert("Error", "Failed to stop recording");
-      }
+      console.log(error);
     }
   };
 
+  // send text to gpt4 API
   const sendToGpt = async (text: string) => {
     try {
       const response = await axios.post(
@@ -189,6 +185,14 @@ export default function HomeScreen() {
     Speech.speak(text, options);
   };
 
+  useEffect(() => {
+    if (AISpeaking) {
+      lottieRef.current?.play();
+    } else {
+      lottieRef.current?.reset();
+    }
+  }, [AISpeaking]);
+
   return (
     <LinearGradient
       colors={["#250152", "#000"]}
@@ -207,7 +211,6 @@ export default function HomeScreen() {
           width: scale(240),
         }}
       />
-
       <Image
         source={require("@/assets/main/purple-blur.png")}
         style={{
@@ -217,6 +220,23 @@ export default function HomeScreen() {
           width: scale(210),
         }}
       />
+
+      {/* Back arrow */}
+      {AIResponse && (
+        <TouchableOpacity
+          style={{
+            position: "absolute",
+            top: verticalScale(50),
+            left: scale(20),
+          }}
+          onPress={() => {
+            setIsRecording(false);
+            setAIResponse(false);
+            setText("");
+          }}>
+          <AntDesign name='arrowleft' size={scale(20)} color='#fff' />
+        </TouchableOpacity>
+      )}
 
       <View style={{ marginTop: verticalScale(-40) }}>
         {loading ? (
@@ -236,52 +256,47 @@ export default function HomeScreen() {
                 {AIResponse ? (
                   <View>
                     <LottieView
+                      ref={lottieRef}
                       source={require("@/assets/animations/ai-speaking.json")}
-                      autoPlay
-                      loop
-                      speed={1.3}
-                      style={{ width: scale(270), height: scale(270) }}
+                      autoPlay={false}
+                      loop={false}
+                      style={{ width: scale(250), height: scale(250) }}
                     />
                   </View>
                 ) : (
-                  <>
-                    <TouchableOpacity
-                      style={{
-                        width: scale(110),
-                        height: scale(110),
-                        backgroundColor: "#fff",
-                        flexDirection: "row",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        borderRadius: scale(100),
-                      }}
-                      onPress={startRecording}>
-                      <FontAwesome
-                        name='microphone'
-                        size={scale(50)}
-                        color='#2b3356'
-                      />
-                    </TouchableOpacity>
-                  </>
+                  <TouchableOpacity
+                    style={{
+                      width: scale(110),
+                      height: scale(110),
+                      backgroundColor: "#fff",
+                      flexDirection: "row",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      borderRadius: scale(100),
+                    }}
+                    onPress={startRecording}>
+                    <FontAwesome
+                      name='microphone'
+                      size={scale(50)}
+                      color='#2b3356'
+                    />
+                  </TouchableOpacity>
                 )}
               </>
             ) : (
-              <>
-                <TouchableOpacity onPress={stopRecording}>
-                  <LottieView
-                    source={require("@/assets/animations/animation.json")}
-                    autoPlay
-                    loop
-                    speed={1.3}
-                    style={{ width: scale(250), height: scale(250) }}
-                  />
-                </TouchableOpacity>
-              </>
+              <TouchableOpacity onPress={stopRecording}>
+                <LottieView
+                  source={require("@/assets/animations/animation.json")}
+                  autoPlay
+                  loop
+                  speed={1.3}
+                  style={{ width: scale(250), height: scale(250) }}
+                />
+              </TouchableOpacity>
             )}
           </>
         )}
       </View>
-
       <View
         style={{
           alignItems: "center",
@@ -300,6 +315,26 @@ export default function HomeScreen() {
           {loading ? "..." : text || "Press the microphone to start recording!"}
         </Text>
       </View>
+      {AIResponse && (
+        <View
+          style={{
+            position: "absolute",
+            bottom: verticalScale(40),
+            left: 0,
+            paddingHorizontal: scale(30),
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+            width: scale(360),
+          }}>
+          <TouchableOpacity onPress={() => sendToGpt(text)}>
+            <Regenerate />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => speakText(text)}>
+            <Reload />
+          </TouchableOpacity>
+        </View>
+      )}
     </LinearGradient>
   );
 }
@@ -307,8 +342,8 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    alignItems: "center",
     justifyContent: "center",
+    alignItems: "center",
     backgroundColor: "#131313",
   },
 });
